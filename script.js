@@ -371,6 +371,9 @@ function thaiDateLabel(d) {
   return d.toLocaleDateString("th-TH", { weekday:"short", day:"numeric", month:"long", year:"2-digit" });
 }
 function getPlanSettings() {
+  // เมื่อกำลังเปิดดู "วันที่ N" ของทริป KCE ให้ใช้โหมดกลางเฉพาะ (kce_trip)
+  // เพื่อไม่ให้ตรรกะบังคับจุดโฟกัสจุดเดียวของโหมดปั๊ม/ซ่อมเข้ามายุ่งกับลำดับที่คำนวณไว้แล้ว
+  if (typeof kceTripState !== "undefined" && kceTripState.active) return { mode: "kce_trip", days: 1 };
   const modeEl = document.getElementById("planMode");
   const mode = modeEl ? modeEl.value : "pump";
   // ยกเลิกการคำนวณ/เลือกวันล่วงหน้า: ระบบวางแผนเฉพาะวันปัจจุบันเท่านั้น
@@ -2667,6 +2670,10 @@ function buildRepairPlanRows(repairRows, marketRows) {
 
 
 function buildPlannedRows(pumpRows, repairRows, marketRows) {
+  // เมื่อกำลังเปิดดู "วันที่ N" ของทริป KCE ให้ใช้ชุดจุดที่คำนวณไว้แล้วของวันนั้นโดยตรง
+  // แทนการสร้างแผนตามโหมดปกติ (ปั๊ม/ซ่อม/วันปกติ) เพื่อให้หน้ารายละเอียด/แผนที่/ฟอร์ม
+  // ใช้ pipeline เดิมทั้งหมดกับข้อมูลของทริปแทน
+  if (kceTripState.active && kceTripState.activeDayRows) return kceTripState.activeDayRows;
   const { mode } = getPlanSettings();
   if (mode === "normal") return buildNormalPlanRows(marketRows);
   if (mode === "repair") return buildRepairPlanRows(repairRows, marketRows);
@@ -3724,6 +3731,511 @@ function applyCoordinatorPhone() {
   if (phone) form.elements.phone.value = phone;
 }
 
+
+/* ===================================================================================
+   ===== KCE Job Planner ("แผนงาน KCE") — โมดูลเสริมสำหรับทีมบำรุงรักษา KCE ส่วนกลาง =====
+   เพิ่มเติมจากระบบเดิมเท่านั้น ไม่แก้ตรรกะ/ข้อมูลของโหมด "วางแผนออกตลาด" ปกติ
+   (pump / repair / normal) และไม่เรียก/พึ่งพา kcp-crm.lovable.app แต่อย่างใด
+   ใช้ฟังก์ชันเดิมของระบบซ้ำทั้งหมด: buildCircularMarketPlanRoute, nearestNeighborOrder,
+   angleAround, buEquivalent, renderRouteDetail/renderMap/checkInGps/saveForm ฯลฯ
+   =================================================================================== */
+
+let kceTripState = {
+  active: false,           // true = กำลังเปิดดู/ทำงาน "วันที่ N" ของทริป (ใช้หน้าเดิม page1 ซ้ำ)
+  activeBU: "",
+  activeDayIndex: -1,
+  activeDayRows: null,     // แถวของวันที่เปิดอยู่ ให้ buildPlannedRows คืนค่านี้ตรง ๆ
+  selectedJobKeys: new Set(),
+  branchQueue: [],         // ลำดับสาขา (BU) ที่ต้องกำหนดจำนวนวัน ทีละสาขา
+  branchCursor: 0,
+  branchDaysConfig: {},    // { bu: จำนวนวัน }
+  trips: {},               // { bu: { tripId, days, dayRoutes:[[rows...]], start } }
+  tripBranchOrder: [],
+  activeTripTabBU: ""
+};
+
+function kceJobKey(row) { return rowUniqueKey(row); }
+
+/* งานที่เลือกได้ = ปรับปรุงปั๊ม/ซ่อม ที่ยังไม่เสร็จ (ข้อมูลเดือนปัจจุบันตาม normalizePump/normalizeRepair)
+   และมีพิกัด มาจาก rawRows ที่ loadData() โหลด/กรองไว้แล้ว จึงไม่ต้องดึงชีตซ้ำ */
+function kceOpenJobs() {
+  return (rawRows || [])
+    .filter(r => r.type === "ปรับปรุงปั๊ม" || r.type === "ซ่อม")
+    .filter(validCoord)
+    .filter(r => !isCompleted(r));
+}
+
+function kceJobBU(row) {
+  const bu = normalizeBUCode(row.bu || inferBUFromAnyText(row.customer_name, row.area, row.coordinator, row.meter, row.customer_id));
+  if (START_POINTS.some(p => p.bu === bu)) return bu;
+  return nearestStartPointForRow(row).bu;
+}
+
+function kceMarketCandidatesForBU(bu) {
+  return (rawRows || [])
+    .filter(r => r.type === "พื้นที่ออกตลาด")
+    .filter(validCoord)
+    .filter(r => buEquivalent(r.bu, bu));
+}
+
+function kceSelectedJobRows() {
+  const jobs = kceOpenJobs();
+  return jobs.filter(j => kceTripState.selectedJobKeys.has(kceJobKey(j)));
+}
+
+/* ===== ขั้นที่ 1: เลือกงาน ===== */
+function kceRenderJobSelection() {
+  const container = document.getElementById("kceJobListContainer");
+  if (!container) return;
+
+  const jobs = kceOpenJobs();
+  const byBranch = new Map();
+  START_POINTS.forEach(p => byBranch.set(p.bu, []));
+  jobs.forEach(j => {
+    const bu = kceJobBU(j);
+    if (!byBranch.has(bu)) byBranch.set(bu, []);
+    byBranch.get(bu).push(j);
+  });
+
+  const order = ["ST", "KN", "MUK", "WNN"];
+  const buKeys = order.filter(b => byBranch.has(b) && byBranch.get(b).length)
+    .concat([...byBranch.keys()].filter(b => !order.includes(b) && byBranch.get(b).length));
+
+  let hasAny = false;
+  const html = buKeys.map(bu => {
+    const list = byBranch.get(bu) || [];
+    if (!list.length) return "";
+    hasAny = true;
+    const branchName = branchNameFromBU(bu);
+    const pumpCount = list.filter(j => j.type === "ปรับปรุงปั๊ม").length;
+    const repairCount = list.filter(j => j.type === "ซ่อม").length;
+    return `
+      <div class="kce-branch-group" data-bu="${escapeHtml(bu)}">
+        <div class="kce-branch-group-head">
+          <div>
+            <div class="kce-branch-title">สาขา ${escapeHtml(bu)}</div>
+            <div class="kce-branch-sub">${escapeHtml(branchName)} • ปรับปรุงปั๊ม ${pumpCount} • ซ่อม ${repairCount}</div>
+          </div>
+          <label class="kce-select-all-chip">
+            <input type="checkbox" class="kce-select-all-cb" data-bu="${escapeHtml(bu)}" />
+            เลือกทั้งหมดในสาขานี้
+          </label>
+        </div>
+        <div class="kce-job-checklist">
+          ${list.map(j => `
+            <label class="kce-job-item">
+              <input type="checkbox" class="kce-job-cb" data-key="${escapeHtml(kceJobKey(j))}" data-bu="${escapeHtml(bu)}" />
+              <div>
+                <div class="kce-job-item-name">${escapeHtml(j.customer_name || j.customer_id || "ไม่ระบุชื่อ")}</div>
+                <div class="kce-job-item-meta">
+                  <span class="kce-job-tag ${j.type === "ซ่อม" ? "repair" : "pump"}">${escapeHtml(j.type)}</span>
+                  ${j.customer_id ? `<span class="kce-job-item-info">${escapeHtml(j.customer_id)}</span>` : (j.meter ? `<span class="kce-job-item-info">${escapeHtml(j.meter)}</span>` : "")}
+                </div>
+                <div class="kce-job-item-status">${escapeHtml(j.status || "รอดำเนินการ")}</div>
+              </div>
+            </label>`).join("")}
+        </div>
+      </div>`;
+  }).join("");
+
+  container.innerHTML = hasAny ? html : `<div class="kce-empty-state">ไม่พบงานปรับปรุงปั๊ม/งานซ่อมที่ยังไม่เสร็จสิ้นในระบบ (หรือข้อมูลงานยังไม่มีพิกัด)</div>`;
+
+  container.querySelectorAll(".kce-job-cb").forEach(cb => {
+    cb.checked = kceTripState.selectedJobKeys.has(cb.dataset.key);
+    cb.addEventListener("change", () => {
+      if (cb.checked) kceTripState.selectedJobKeys.add(cb.dataset.key);
+      else kceTripState.selectedJobKeys.delete(cb.dataset.key);
+      kceSyncSelectAllChecks();
+      kceUpdateSelectionCount();
+    });
+  });
+  container.querySelectorAll(".kce-select-all-cb").forEach(chk => {
+    chk.addEventListener("change", () => {
+      const bu = chk.dataset.bu;
+      container.querySelectorAll(`.kce-job-cb[data-bu="${bu}"]`).forEach(cb => {
+        cb.checked = chk.checked;
+        if (chk.checked) kceTripState.selectedJobKeys.add(cb.dataset.key);
+        else kceTripState.selectedJobKeys.delete(cb.dataset.key);
+      });
+      kceUpdateSelectionCount();
+    });
+  });
+  kceSyncSelectAllChecks();
+  kceUpdateSelectionCount();
+}
+
+function kceSyncSelectAllChecks() {
+  document.querySelectorAll(".kce-select-all-cb").forEach(chk => {
+    const boxes = document.querySelectorAll(`.kce-job-cb[data-bu="${chk.dataset.bu}"]`);
+    chk.checked = boxes.length > 0 && Array.from(boxes).every(cb => cb.checked);
+  });
+}
+
+function kceUpdateSelectionCount() {
+  const count = kceTripState.selectedJobKeys.size;
+  const countEl = document.getElementById("kceSelectedCount");
+  const btn = document.getElementById("kceSelectNextBtn");
+  const bar = document.getElementById("kceSelectBar");
+  if (countEl) countEl.textContent = String(count);
+  if (btn) btn.disabled = count === 0;
+  if (bar) bar.hidden = false;
+}
+
+/* ===== สลับขั้นตอนภายในหน้า "แผนงาน KCE" ===== */
+function kceShowStep(step) {
+  const stepSelect = document.getElementById("kceStepSelect");
+  const stepDays = document.getElementById("kceStepDays");
+  const stepTrip = document.getElementById("kceStepTrip");
+  const selectBar = document.getElementById("kceSelectBar");
+  const daysBar = document.getElementById("kceDaysBar");
+  if (stepSelect) stepSelect.hidden = step !== "select";
+  if (stepDays) stepDays.hidden = step !== "days";
+  if (stepTrip) stepTrip.hidden = step !== "trip";
+  if (selectBar) selectBar.hidden = step !== "select";
+  if (daysBar) daysBar.hidden = step !== "days";
+  if (step === "select") kceUpdateSelectionCount();
+}
+
+/* ===== ขั้นที่ 2: กำหนดจำนวนวันทีละสาขา ===== */
+function kceGoToDaysStep() {
+  const jobs = kceSelectedJobRows();
+  if (!jobs.length) return;
+  const branches = [...new Set(jobs.map(kceJobBU))];
+  const order = ["ST", "KN", "MUK", "WNN"];
+  kceTripState.branchQueue = order.filter(b => branches.includes(b)).concat(branches.filter(b => !order.includes(b)));
+  kceTripState.branchCursor = 0;
+  kceShowStep("days");
+  kceRenderBranchDaysStep();
+}
+
+function kceGoToDaysStepForRegenerate() {
+  // "ปรับแผนงานใหม่": กลับไปหน้ากำหนดจำนวนวัน โดยใช้ชุดงาน/ลำดับสาขาเดิม
+  // แล้วให้ผู้ใช้กด "สร้างแผนงานทริป" อีกครั้ง = สร้างแผนวันใหม่ทั้งทริป (ไม่รองรับแก้ไขบางส่วน)
+  if (!kceTripState.branchQueue.length) { kceShowStep("select"); return; }
+  kceTripState.branchCursor = 0;
+  kceShowStep("days");
+  kceRenderBranchDaysStep();
+}
+
+function kceDaysBack() {
+  if (kceTripState.branchCursor > 0) {
+    kceTripState.branchCursor -= 1;
+    kceRenderBranchDaysStep();
+  } else {
+    kceShowStep("select");
+  }
+}
+
+function kceRenderBranchDaysStep() {
+  const bu = kceTripState.branchQueue[kceTripState.branchCursor];
+  const jobs = kceSelectedJobRows().filter(j => kceJobBU(j) === bu);
+  const branchName = branchNameFromBU(bu);
+  const defaultDays = bu === "ST" ? 1 : 2;
+  const suggested = Math.max(defaultDays, Math.ceil(jobs.length / MAX_ROUTE_CUSTOMER_STOPS));
+  const days = kceTripState.branchDaysConfig[bu] || suggested;
+  kceTripState.branchDaysConfig[bu] = days;
+
+  const total = kceTripState.branchQueue.length;
+  const container = document.getElementById("kceBranchStepContainer");
+  if (!container) return;
+  container.innerHTML = `
+    <div class="kce-branch-card">
+      <div class="kce-branch-card-head">
+        <div class="kce-branch-avatar">${escapeHtml(bu)}</div>
+        <div>
+          <div class="kce-branch-title">สาขา ${escapeHtml(bu)}</div>
+          <div class="kce-branch-sub">${escapeHtml(branchName)}</div>
+        </div>
+      </div>
+      ${total > 1 ? `<div class="kce-branch-progress">กำหนดสาขาที่ ${kceTripState.branchCursor + 1} จาก ${total} สาขา</div>` : ""}
+      <div class="kce-branch-count-chip">เลือกไว้ ${jobs.length} งาน</div>
+      <div class="kce-day-row">
+        <div>
+          <div class="kce-day-row-label">จำนวนวัน (กี่วัน?)</div>
+          <div class="kce-day-row-sub">${bu === "ST" ? "สาขาหลัก" : "สาขาอื่น"}</div>
+        </div>
+        <div class="kce-day-stepper">
+          <button type="button" id="kceDayMinus">−</button>
+          <input type="number" id="kceDayInput" value="${days}" min="1" max="14" inputmode="numeric" />
+          <button type="button" id="kceDayPlus">+</button>
+        </div>
+      </div>
+      <p class="kce-day-note">วันละไม่เกิน ${MAX_ROUTE_CUSTOMER_STOPS} จุด เพื่อความสะดวกในการเดินทาง</p>
+    </div>`;
+
+  const input = document.getElementById("kceDayInput");
+  const clamp = v => Math.min(14, Math.max(1, v));
+  if (input) input.addEventListener("change", () => {
+    const v = clamp(toNumber(input.value) || 1);
+    input.value = v;
+    kceTripState.branchDaysConfig[bu] = v;
+  });
+  const minusBtn = document.getElementById("kceDayMinus");
+  const plusBtn = document.getElementById("kceDayPlus");
+  if (minusBtn) minusBtn.addEventListener("click", () => {
+    const v = clamp((toNumber(input.value) || 1) - 1);
+    input.value = v;
+    kceTripState.branchDaysConfig[bu] = v;
+  });
+  if (plusBtn) plusBtn.addEventListener("click", () => {
+    const v = clamp((toNumber(input.value) || 1) + 1);
+    input.value = v;
+    kceTripState.branchDaysConfig[bu] = v;
+  });
+
+  const nextBtn = document.getElementById("kceDaysNextBtn");
+  const isLast = kceTripState.branchCursor === total - 1;
+  if (nextBtn) nextBtn.textContent = isLast ? "สร้างแผนงานทริป" : "ต่อไป";
+}
+
+function kceDaysNext() {
+  const bu = kceTripState.branchQueue[kceTripState.branchCursor];
+  const input = document.getElementById("kceDayInput");
+  if (input) kceTripState.branchDaysConfig[bu] = Math.min(14, Math.max(1, toNumber(input.value) || 1));
+
+  const isLast = kceTripState.branchCursor === kceTripState.branchQueue.length - 1;
+  if (isLast) {
+    kceGenerateTrip();
+  } else {
+    kceTripState.branchCursor += 1;
+    kceRenderBranchDaysStep();
+  }
+}
+
+/* ===== แบ่งงานตามจำนวนวัน: จัดกลุ่มแบบ sector รอบจุดเริ่มของสาขา (ใกล้เคียงกันอยู่วันเดียวกัน) ===== */
+function kcePartitionJobsByDay(jobs, start, days) {
+  const n = Math.max(1, days);
+  const valid = jobs.filter(validCoord);
+  if (!valid.length) return Array.from({ length: n }, () => []);
+  if (n === 1) return [valid];
+
+  const sorted = [...valid].sort((a, b) => angleAround(start, a) - angleAround(start, b));
+  const groups = Array.from({ length: n }, () => []);
+  const perDay = Math.ceil(sorted.length / n);
+  sorted.forEach((job, idx) => {
+    const dayIdx = Math.min(n - 1, Math.floor(idx / perDay));
+    groups[dayIdx].push(job);
+  });
+  return groups;
+}
+
+/* ===== สร้างเส้นทางของ 1 วัน: ใช้ buildCircularMarketPlanRoute เดิม (จุดงานเป็น required เสมอ) ===== */
+function kceBuildDayRoute(start, anchorJobs, marketCandidates) {
+  const anchors = uniqueRowsByIdName(anchorJobs).filter(validCoord);
+  if (!anchors.length) return [];
+  if (anchors.length > MAX_ROUTE_CUSTOMER_STOPS) {
+    // เกินจำนวนจุดสูงสุดต่อวัน (แจ้งเตือนแยกไว้แล้วให้เพิ่มวัน/ลดงาน) เรียงตามใกล้สุดแล้วตัดเหลือ MAX_ROUTE_CUSTOMER_STOPS จุดแรกไปก่อน
+    return nearestNeighborOrder(start, anchors).slice(0, MAX_ROUTE_CUSTOMER_STOPS);
+  }
+  const targetStops = Math.min(MAX_ROUTE_CUSTOMER_STOPS, Math.max(TARGET_CORE_ROUTE_STOPS, anchors.length));
+  return buildCircularMarketPlanRoute(start, anchors, marketCandidates, targetStops, false);
+}
+
+/* ===== ขั้นที่ 3: สร้างแผนทริปทั้งหมด (ทุกสาขาที่กำหนดจำนวนวันไว้) ===== */
+function kceGenerateTrip() {
+  const selected = kceSelectedJobRows();
+  const trips = {};
+  const branchOrder = [];
+  const overflowMsgs = [];
+  const tripDateStr = todayInputValue().replace(/-/g, "");
+
+  kceTripState.branchQueue.forEach(bu => {
+    const jobs = selected.filter(j => kceJobBU(j) === bu);
+    if (!jobs.length) return;
+    const days = Math.min(14, Math.max(1, kceTripState.branchDaysConfig[bu] || 1));
+    const start = START_POINTS.find(p => p.bu === bu) || bestStartForRoute(jobs);
+    const marketCandidates = kceMarketCandidatesForBU(bu);
+    const dayGroups = kcePartitionJobsByDay(jobs, start, days);
+    const tripId = `${bu}-${tripDateStr}`;
+
+    const dayRoutes = dayGroups.map((anchorJobs, dayIdx) => {
+      if (anchorJobs.length > MAX_ROUTE_CUSTOMER_STOPS) {
+        overflowMsgs.push(`สาขา ${bu} วันที่ ${dayIdx + 1}: มี ${anchorJobs.length} งาน เกินขีดจำกัด ${MAX_ROUTE_CUSTOMER_STOPS} จุด/วัน — เพิ่มจำนวนวัน หรือลดจำนวนงานที่เลือก`);
+      }
+      const ordered = kceBuildDayRoute(start, anchorJobs, marketCandidates);
+      const routeGroupLabel = `ทริป KCE ${bu} วันที่ ${dayIdx + 1}/${days} (${thaiDateLabel(thaiNow())})`;
+      return ordered.map((row, idx) => ({
+        ...row,
+        plan_day: dayIdx + 1,
+        plan_date: thaiNow(),
+        route_group: routeGroupLabel,
+        stop_no: `${idx + 1}/${ordered.length}`,
+        start_name: start.name
+      }));
+    });
+
+    trips[bu] = { tripId, days, dayRoutes, start };
+    branchOrder.push(bu);
+  });
+
+  kceTripState.trips = trips;
+  kceTripState.tripBranchOrder = branchOrder;
+  kceTripState.activeTripTabBU = branchOrder[0] || "";
+
+  const warnEl = document.getElementById("kceTripWarning");
+  if (warnEl) {
+    if (overflowMsgs.length) {
+      warnEl.hidden = false;
+      warnEl.innerHTML = overflowMsgs.map(escapeHtml).join("<br>");
+    } else {
+      warnEl.hidden = true;
+      warnEl.innerHTML = "";
+    }
+  }
+
+  kceShowStep("trip");
+  kceRenderTripView();
+}
+
+/* ===== ขั้นที่ 3: แสดงแท็บสาขา + การ์ดรายวัน ===== */
+function kceRenderTripView() {
+  const tabsEl = document.getElementById("kceTripBranchTabs");
+  const daysEl = document.getElementById("kceTripDaysContainer");
+  if (!tabsEl || !daysEl) return;
+
+  const branches = kceTripState.tripBranchOrder;
+  if (!branches.length) {
+    tabsEl.innerHTML = "";
+    daysEl.innerHTML = `<div class="kce-empty-state">ยังไม่มีแผนทริป กรุณาเลือกงานและกำหนดจำนวนวันก่อน</div>`;
+    return;
+  }
+  if (!branches.includes(kceTripState.activeTripTabBU)) kceTripState.activeTripTabBU = branches[0];
+
+  tabsEl.innerHTML = branches.length > 1 ? branches.map(bu =>
+    `<button type="button" class="kce-branch-tab${bu === kceTripState.activeTripTabBU ? " active" : ""}" data-bu="${escapeHtml(bu)}">สาขา ${escapeHtml(bu)}</button>`
+  ).join("") : "";
+
+  tabsEl.querySelectorAll(".kce-branch-tab").forEach(btn => btn.addEventListener("click", () => {
+    kceTripState.activeTripTabBU = btn.dataset.bu;
+    kceRenderTripView();
+  }));
+
+  const trip = kceTripState.trips[kceTripState.activeTripTabBU];
+  if (!trip) { daysEl.innerHTML = ""; return; }
+
+  daysEl.innerHTML = trip.dayRoutes.map((rows, idx) => {
+    const total = rows.length;
+    const done = rows.filter(isCompleted).length;
+    const pct = total ? Math.round((done / total) * 100) : 0;
+    const allDone = total > 0 && done === total;
+    const names = rows.map(r => r.customer_name || r.customer_id).filter(Boolean).slice(0, 3).join(" → ");
+    return `
+      <div class="kce-day-card${allDone ? " all-done" : ""}">
+        <div class="kce-day-card-head">
+          <div>
+            <div class="kce-day-card-title">วันที่ ${idx + 1} จาก ${trip.days}</div>
+            <div class="kce-day-card-count">${total} จุด${names ? ` • ${escapeHtml(names)}${total > 3 ? " ..." : ""}` : ""}</div>
+          </div>
+        </div>
+        <div class="kce-day-card-progress">
+          <div class="kce-progress-track"><div class="kce-progress-fill" style="width:${pct}%"></div></div>
+          <div class="kce-progress-text">${allDone ? "เสร็จสิ้นทุกจุดแล้ว" : `เข้าบริการแล้ว ${done}/${total} จุด`}</div>
+        </div>
+        <button type="button" class="kce-day-card-open-btn${allDone ? " done" : ""}" data-bu="${escapeHtml(kceTripState.activeTripTabBU)}" data-day="${idx}">
+          ${allDone ? "ดูรายละเอียด (เสร็จแล้ว)" : "เปิดดูแผนวันนี้"}
+        </button>
+      </div>`;
+  }).join("");
+
+  daysEl.querySelectorAll(".kce-day-card-open-btn").forEach(btn => btn.addEventListener("click", () => {
+    kceOpenDay(btn.dataset.bu, Number(btn.dataset.day));
+  }));
+}
+
+/* ===== ขั้นที่ 4: เปิดดู/ทำงาน "วันที่ N" — ใช้หน้าวางแผนออกตลาด (page1) เดิมซ้ำทั้งหมด
+   (การ์ดสรุป, รายละเอียดเส้นทาง, แผนที่, ฟอร์มบันทึกผล, ปุ่มเช็คอิน GPS เหมือนแผนวันเดียวปกติทุกอย่าง) ===== */
+function kceOpenDay(bu, dayIdx) {
+  const trip = kceTripState.trips[bu];
+  if (!trip || !trip.dayRoutes[dayIdx]) return;
+
+  kceTripState.active = true;
+  kceTripState.activeBU = bu;
+  kceTripState.activeDayIndex = dayIdx;
+  kceTripState.activeDayRows = trip.dayRoutes[dayIdx];
+
+  plannedRows = kceTripState.activeDayRows;
+  selectedRouteKey = "";
+  routeCollapsedToSelected = false;
+
+  const form = document.getElementById("planForm");
+  if (form) {
+    // ตั้งค่าทั้ง .value และ attribute "value" เพื่อให้ข้อมูลทริปยังอยู่หลัง form.reset() ตอนบันทึกสำเร็จ
+    // (saveForm() เดิมเรียก e.target.reset() ทุกครั้งที่บันทึกสำเร็จ ระหว่างยังอยู่ในวันเดียวกันของทริป)
+    [["trip_id", trip.tripId], ["day_number", String(dayIdx + 1)], ["total_days", String(trip.days)]].forEach(([name, val]) => {
+      const el = form.elements[name];
+      if (el) { el.value = val; el.setAttribute("value", val); }
+    });
+  }
+
+  const banner = document.getElementById("kceTripBanner");
+  const bannerText = document.getElementById("kceTripBannerText");
+  if (banner) banner.hidden = false;
+  if (bannerText) bannerText.textContent = `ทริป KCE • สาขา ${bu} • วันที่ ${dayIdx + 1} จาก ${trip.days}`;
+
+  showAppPage(1);
+  renderTable();
+}
+
+function kceExitTripDayMode() {
+  kceTripState.active = false;
+  kceTripState.activeDayRows = null;
+  const form = document.getElementById("planForm");
+  if (form) {
+    ["trip_id", "day_number", "total_days"].forEach(name => {
+      const el = form.elements[name];
+      if (el) { el.value = ""; el.setAttribute("value", ""); }
+    });
+  }
+  const banner = document.getElementById("kceTripBanner");
+  if (banner) banner.hidden = true;
+}
+
+async function kceBackToTrip() {
+  kceExitTripDayMode();
+  showAppPage(3);
+  await loadData();
+  kceRenderTripView();
+}
+
+/* ===== เข้าหน้า "แผนงาน KCE" จากแท็บหลัก ===== */
+async function kceWaitForData(maxMs = 6000) {
+  const startTs = Date.now();
+  while ((!rawRows || !rawRows.length) && isLoadingData && (Date.now() - startTs) < maxMs) {
+    await new Promise(r => setTimeout(r, 150));
+  }
+}
+
+async function kceOpenTripTab() {
+  if (kceTripState.active) kceExitTripDayMode();
+  showAppPage(3);
+
+  if (kceTripState.tripBranchOrder.length) {
+    kceShowStep("trip");
+    kceRenderTripView();
+    return;
+  }
+
+  kceShowStep("select");
+  if (!rawRows || !rawRows.length) {
+    const container = document.getElementById("kceJobListContainer");
+    if (container) container.innerHTML = `<div class="loading">กำลังโหลดข้อมูลงาน...</div>`;
+    if (!isLoadingData) await loadData();
+    else await kceWaitForData();
+  }
+  kceRenderJobSelection();
+}
+
+function kceHandleMainTabClick() {
+  if (kceTripState.active) { kceExitTripDayMode(); loadData(); }
+  showAppPage(1);
+}
+
+function kceHandleDashboardTabClick() {
+  if (kceTripState.active) kceExitTripDayMode();
+  showAppPage(2);
+}
+
+
 document.getElementById("planForm").addEventListener("submit", saveForm);
 if (document.getElementById("searchBox")) document.getElementById("searchBox").addEventListener("input", renderTable);
 if (document.getElementById("typeFilter")) document.getElementById("typeFilter").addEventListener("change", renderTable);
@@ -3747,22 +4259,34 @@ if (document.getElementById("coordinatorSelect")) document.getElementById("coord
 loadData();
 
 
-/* ===== Page switch: Page 1 planning / Page 2 dashboard ===== */
+/* ===== Page switch: Page 1 planning / Page 2 dashboard / Page 3 แผนงาน KCE ===== */
 function showAppPage(pageNo) {
   const page1 = document.getElementById("page1");
   const page2 = document.getElementById("page2");
+  const page3 = document.getElementById("page3");
   const btn1 = document.getElementById("btnPage1");
   const btn2 = document.getElementById("btnPage2");
-  const isPage2 = Number(pageNo) === 2;
+  const btn3 = document.getElementById("btnPage3");
+  const num = Number(pageNo);
+  const isPage2 = num === 2;
+  const isPage3 = num === 3;
 
-  if (page1) page1.hidden = isPage2;
+  if (page1) page1.hidden = isPage2 || isPage3;
   if (page2) page2.hidden = !isPage2;
-  if (btn1) btn1.classList.toggle("active", !isPage2);
+  if (page3) page3.hidden = !isPage3;
+  if (btn1) btn1.classList.toggle("active", !isPage2 && !isPage3);
   if (btn2) btn2.classList.toggle("active", isPage2);
+  if (btn3) btn3.classList.toggle("active", isPage3);
 
   if (isPage2) renderVisitDashboard();
-  if (!isPage2 && routeMap) setTimeout(() => routeMap.invalidateSize(), 150);
+  if (!isPage2 && !isPage3 && routeMap) setTimeout(() => routeMap.invalidateSize(), 150);
 }
 
-if (document.getElementById("btnPage1")) document.getElementById("btnPage1").addEventListener("click", () => showAppPage(1));
-if (document.getElementById("btnPage2")) document.getElementById("btnPage2").addEventListener("click", () => showAppPage(2));
+if (document.getElementById("btnPage1")) document.getElementById("btnPage1").addEventListener("click", kceHandleMainTabClick);
+if (document.getElementById("btnPage2")) document.getElementById("btnPage2").addEventListener("click", kceHandleDashboardTabClick);
+if (document.getElementById("btnPage3")) document.getElementById("btnPage3").addEventListener("click", kceOpenTripTab);
+if (document.getElementById("kceBackToTripBtn")) document.getElementById("kceBackToTripBtn").addEventListener("click", kceBackToTrip);
+if (document.getElementById("kceSelectNextBtn")) document.getElementById("kceSelectNextBtn").addEventListener("click", kceGoToDaysStep);
+if (document.getElementById("kceDaysBackBtn")) document.getElementById("kceDaysBackBtn").addEventListener("click", kceDaysBack);
+if (document.getElementById("kceDaysNextBtn")) document.getElementById("kceDaysNextBtn").addEventListener("click", kceDaysNext);
+if (document.getElementById("kceRegenerateBtn")) document.getElementById("kceRegenerateBtn").addEventListener("click", kceGoToDaysStepForRegenerate);
