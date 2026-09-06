@@ -1,274 +1,777 @@
 <!DOCTYPE html>
 <html lang="th">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>ระบบวางแผนออกตลาด KCE</title>
-  <link rel="preconnect" href="https://docs.google.com" />
-  <link rel="preconnect" href="https://script.google.com" />
-  <link rel="preconnect" href="https://unpkg.com" />
-  <link rel="preconnect" href="https://router.project-osrm.org" />
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
-  <link rel="stylesheet" href="style.css?v=20260716-dashboard-all-default-v9" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap');
+    body { font-family: 'Sarabun', sans-serif; background-color: #f3f4f6; }
+    .map-container { height: 300px; width: 100%; border-radius: 0.5rem; z-index: 1; }
+    .tab-active { border-bottom: 2px solid #3b82f6; color: #3b82f6; font-weight: bold; }
+    .tab-inactive { color: #6b7280; border-bottom: 2px solid transparent; }
+    /* Fix leaflet control z-index overlapping fixed header */
+    .leaflet-top, .leaflet-bottom { z-index: 400 !important; }
+  </style>
 </head>
-<body>
-  <header class="app-header">
-    <div>
-      <h1>ระบบวางแผนออกตลาด KCE</h1>
-      <p>แสดงแผนเฉพาะเดือนปัจจุบัน • ตัดจุดที่ออกตลาดแล้ว • เลือกจุดเริ่มต้นที่ใกล้ทั้งเส้นทางที่สุด</p>
-    </div>
+<body class="bg-gray-100">
+
+<div id="app" class="max-w-md mx-auto bg-white min-h-screen shadow-lg pb-20 relative">
+  <!-- Header -->
+  <header class="bg-blue-600 text-white p-4 shadow flex justify-between items-center sticky top-0 z-50">
+    <h1 class="text-xl font-bold">ระบบ KCE</h1>
+    <button onclick="loadData(true)" class="text-sm bg-blue-700 hover:bg-blue-800 px-3 py-1.5 rounded flex items-center shadow-sm">
+      <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+      รีเฟรชข้อมูล
+    </button>
   </header>
 
-  <nav class="page-tabs desktop-only" aria-label="สลับหน้า">
-    <button id="btnPage1" class="page-tab active" type="button">วางแผนออกตลาด</button>
-    <button id="btnPage2" class="page-tab" type="button">Dashboard ย้อนหลัง</button>
-  </nav>
+  <!-- Navigation Tabs -->
+  <div class="flex border-b bg-white sticky top-[60px] z-40 shadow-sm">
+    <button class="flex-1 py-3 text-center tab-inactive text-sm transition-colors" onclick="alert('ฟังก์ชันวางแผนออกตลาดทั่วไป สำหรับเซลส์สาขา (อยู่นอกเหนือส่วน KCE)')">วางแผนออกตลาด</button>
+    <button class="flex-1 py-3 text-center tab-active text-sm transition-colors">แผนงาน KCE</button>
+  </div>
 
-  <main id="page1" class="app-page page-active">
-    <section class="summary-grid">
-      <div class="summary-card"><span>ทั้งหมดที่แสดง</span><strong id="sumAll">0</strong></div>
-      <div class="summary-card urgent"><span>ปรับปรุงปั๊ม</span><strong id="sumPump">0</strong></div>
-      <div class="summary-card repair"><span>ตารางซ่อม</span><strong id="sumRepair">0</strong></div>
-      <div class="summary-card market"><span>พื้นที่เซลล์</span><strong id="sumMarket">0</strong></div>
-    </section>
+  <!-- Main Content Area -->
+  <div id="content" class="p-4">
+    
+    <!-- Loading State -->
+    <div id="loading" class="text-center py-12">
+      <div class="animate-spin rounded-full h-12 w-12 border-b-4 border-blue-600 mx-auto mb-4"></div>
+      <p class="text-gray-600 font-medium">กำลังโหลดข้อมูลงาน...</p>
+      <p class="text-xs text-gray-400 mt-2">อาจใช้เวลาสักครู่ในการดึงข้อมูลจากชีต</p>
+    </div>
 
-    <section class="route-card">
-      <div class="route-top">
+    <!-- Step 1: Job Selection -->
+    <div id="step-select" class="hidden">
+      <h2 class="text-xl font-bold text-gray-800 mb-1">เลือกงานที่ต้องการทำ</h2>
+      <p class="text-sm text-gray-500 mb-4">แสดงเฉพาะงานปรับปรุงปั๊มและงานซ่อมที่ยังไม่เสร็จสิ้น</p>
+      
+      <div id="job-list-container" class="space-y-5"></div>
+      
+      <!-- Sticky Bottom Button -->
+      <div class="fixed bottom-0 left-0 right-0 p-4 bg-white border-t z-50 flex justify-center pointer-events-none">
+        <div class="max-w-md w-full pointer-events-auto">
+          <button onclick="goToStepDays()" id="btn-next" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-xl shadow-lg disabled:bg-gray-300 disabled:text-gray-500 disabled:shadow-none transition-all flex justify-center items-center">
+            ดำเนินการต่อ (เลือก <span id="selected-count" class="mx-1">0</span> งาน)
+            <svg class="w-5 h-5 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 2: Day Configuration -->
+    <div id="step-days" class="hidden pb-24">
+      <div class="flex items-center mb-4 pb-2 border-b border-gray-100">
+        <button onclick="goToStepSelect()" class="text-gray-500 hover:text-blue-600 p-1 mr-2 rounded-full hover:bg-gray-100">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
+        </button>
+        <h2 class="text-xl font-bold text-gray-800">กำหนดจำนวนวัน</h2>
+      </div>
+      <p class="text-sm text-gray-600 mb-5 bg-blue-50 p-3 rounded-lg border border-blue-100">
+        ระบบได้จัดกลุ่มงานตามสาขาให้แล้ว กรุณาระบุจำนวนวันที่จะลงพื้นที่ในแต่ละสาขา เพื่อให้ระบบแบ่งเส้นทางให้อัตโนมัติ
+      </p>
+      
+      <div id="branch-days-container" class="space-y-4 mb-8"></div>
+      
+      <div class="fixed bottom-0 left-0 right-0 p-4 bg-white border-t z-50 flex justify-center pointer-events-none">
+        <div class="max-w-md w-full pointer-events-auto">
+          <button onclick="generateTrip()" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3.5 rounded-xl shadow-lg transition-all flex justify-center items-center">
+            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+            สร้างแผนงานทริป
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 3: Generated Trip -->
+    <div id="step-trip" class="hidden">
+      <div class="flex items-center justify-between mb-4 border-b pb-3 border-gray-200">
+        <h2 class="text-xl font-bold text-gray-800">แผนงานของคุณ</h2>
+        <button onclick="goToStepDays()" class="text-sm text-red-600 border border-red-200 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg flex items-center">
+          <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+          สร้างใหม่
+        </button>
+      </div>
+      
+      <div id="trip-branches-tabs" class="flex overflow-x-auto space-x-2 mb-5 pb-1 hide-scrollbar"></div>
+      
+      <div id="trip-days-container" class="space-y-4"></div>
+    </div>
+    
+    <!-- Execution View (Day Detail) -->
+    <div id="step-execution" class="hidden relative pb-10">
+      <!-- Route details, Map, and Check-in Form -->
+    </div>
+  </div>
+</div>
+
+<style>
+  /* Hide scrollbar for horizontal scrolling tabs */
+  .hide-scrollbar::-webkit-scrollbar { display: none; }
+  .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+</style>
+
+<script>
+const SHEET_ID = "1mpy2nobQMqhLYWIem2dom74Ow2h8v-UFiqbJHZQ4IDk";
+const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzEJhR_nH9FO8BVFfdTPoSGgujpG7hVPPbPWQQLwLumRUb6Wwz4BqG1797vLR056FZ9/exec";
+
+const START_POINTS = {
+  ST: { name: "สามทองบริการ", lat: 16.381126, lng: 103.348786, bu: "ST" },
+  KN: { name: "เค.ซี.ปิโตรเลียม2006", lat: 16.716021, lng: 103.082049, bu: "KN" },
+  MUK: { name: "เค.ซี.จี.ปิโตรเลียม", lat: 16.435929, lng: 104.616261, bu: "MUK" },
+  WNN: { name: "เค.ซี. กรีน เอ็นเนอร์จี", lat: 17.629400, lng: 103.767589, bu: "WNN" }
+};
+
+let allJobs = [];
+let selectedJobs = [];
+let branchDaysConfig = {};
+let tripPlan = {}; 
+let leafletMap = null;
+
+// Helper: Haversine distance
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371; 
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLon/2) * Math.sin(dLon/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
+}
+
+// Data Fetching
+async function fetchSheetRows(sheetName) {
+  const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
+  const res = await fetch(url);
+  if(!res.ok) throw new Error(`ไม่สามารถเชื่อมต่อชีต ${sheetName}`);
+  const text = await res.text();
+  const jsonText = text.substring(text.indexOf("{"), text.lastIndexOf("}") + 1);
+  const json = JSON.parse(jsonText);
+  return json.table.rows.map(r => (r.c || []).map(c => c ? (c.f || c.v || "") : ""));
+}
+
+function parseJobs(rows, type) {
+  if (!rows || rows.length === 0) return [];
+  const headers = rows[0].map(h => String(h).trim().toLowerCase());
+  
+  const findCol = (names) => {
+    for (let n of names) {
+      const idx = headers.indexOf(n.toLowerCase());
+      if (idx !== -1) return idx;
+    }
+    return -1;
+  };
+
+  const idCol = findCol(["รหัสลูกค้า", "รหัสปั๊ม", "id"]);
+  const nameCol = findCol(["ชื่อลูกค้า / ชื่อปั๊ม", "ชื่อลูกค้า/ชื่อปั๊ม", "ชื่อลูกค้า", "ชื่อปั๊ม", "customer"]);
+  const branchCol = findCol(["bu / สังกัด", "bu/สังกัด", "bu", "สังกัด", "สาขา"]);
+  const latCol = findCol(["ละติจูด", "lat", "latitude"]);
+  const lngCol = findCol(["ลองจิจูด", "lng", "longitude"]);
+  const statusCol = findCol(["สถานะ", "ความคืบหน้า", "status"]);
+
+  const jobs = [];
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    const status = statusCol >= 0 ? String(r[statusCol]||"").trim() : "";
+    
+    // Filter out finished jobs
+    if (status && (status.includes("เสร็จ") || status.includes("done") || status.includes("ปิด") || status.includes("เรียบร้อย"))) {
+        continue;
+    }
+    
+    const lat = latCol >= 0 ? parseFloat(String(r[latCol]).replace(/,/g, '')) : null;
+    const lng = lngCol >= 0 ? parseFloat(String(r[lngCol]).replace(/,/g, '')) : null;
+    if (!lat || !lng || isNaN(lat) || isNaN(lng)) continue;
+    
+    let bu = branchCol >= 0 ? String(r[branchCol]).toUpperCase().trim() : "ST";
+    if(bu.includes("KCG")) bu = "MUK"; // Normalize BU
+    if(!START_POINTS[bu]) bu = "ST"; // Default to ST if unknown
+    
+    jobs.push({
+      id: idCol >= 0 ? r[idCol] : `job-${type}-${i}`,
+      name: nameCol >= 0 ? (r[nameCol] || 'ไม่ระบุชื่อ') : `งาน ${type} ${i}`,
+      branch: bu,
+      lat,
+      lng,
+      type: type,
+      status: status || 'รอดำเนินการ'
+    });
+  }
+  return jobs;
+}
+
+async function loadData(force = false) {
+  document.getElementById('loading').classList.remove('hidden');
+  document.getElementById('step-select').classList.add('hidden');
+  document.getElementById('step-days').classList.add('hidden');
+  document.getElementById('step-trip').classList.add('hidden');
+  document.getElementById('step-execution').classList.add('hidden');
+  
+  // Hide sticky buttons correctly
+  document.getElementById('step-select').style.paddingBottom = "0px";
+  
+  try {
+    const [pumpRows, repairRows] = await Promise.all([
+      fetchSheetRows("ตารางปรับปรุงปั๊ม"),
+      fetchSheetRows("ตารางซ่อม")
+    ]);
+    
+    const pumps = parseJobs(pumpRows, "ปรับปรุงปั๊ม");
+    const repairs = parseJobs(repairRows, "ซ่อม");
+    
+    allJobs = [...pumps, ...repairs];
+    
+    if(allJobs.length === 0) {
+      alert("ไม่พบงานปรับปรุง/ซ่อมที่ยังไม่เสร็จ (หรือข้อมูลไม่มีพิกัด)");
+    }
+    
+    renderJobSelection();
+  } catch (err) {
+    alert("เกิดข้อผิดพลาดในการโหลดข้อมูล: " + err.message);
+  } finally {
+    document.getElementById('loading').classList.add('hidden');
+  }
+}
+
+// UI - Step 1: Select
+function renderJobSelection() {
+  document.getElementById('step-select').classList.remove('hidden');
+  document.getElementById('step-select').style.paddingBottom = "80px"; // space for sticky button
+  
+  const container = document.getElementById('job-list-container');
+  container.innerHTML = '';
+  
+  const byBranch = { ST: [], KN: [], MUK: [], WNN: [] };
+  allJobs.forEach(j => {
+    if (byBranch[j.branch]) byBranch[j.branch].push(j);
+  });
+  
+  let hasAnyJob = false;
+  
+  for (const [bu, jobs] of Object.entries(byBranch)) {
+    if (jobs.length === 0) continue;
+    hasAnyJob = true;
+    
+    const branchName = START_POINTS[bu].name;
+    const typeCounts = { 'ปรับปรุงปั๊ม': 0, 'ซ่อม': 0 };
+    jobs.forEach(j => typeCounts[j.type]++);
+    
+    const section = document.createElement('div');
+    section.className = 'bg-white p-4 rounded-xl shadow-sm border border-gray-200';
+    section.innerHTML = `
+      <div class="flex justify-between items-center mb-3 border-b pb-2">
         <div>
-          <h2>แผนเส้นทางแบบวงกลม</h2>
-          <p>คลิกการ์ดแผนแต่ละสายเพื่อดูรายละเอียดและแผนที่ทันที</p>
-          <p class="month-note">เดือนที่แสดง: <strong id="currentMonthLabel">-</strong></p>
-          <div class="plan-controls">
-            <label>จุดเริ่ม
-              <select id="startPointInput">
-                <option value="อัตโนมัติ">อัตโนมัติ</option>
-                <option value="สามทองบริการ">สามทองบริการ</option>
-                <option value="เค.ซี.ปิโตรเลียม2006">เค.ซี.ปิโตรเลียม2006</option>
-                <option value="เค.ซี.จี.ปิโตรเลียม">เค.ซี.จี.ปิโตรเลียม</option>
-                <option value="เค.ซี. กรีน เอ็นเนอร์จี">เค.ซี. กรีน เอ็นเนอร์จี</option>
-              </select>
-            </label>
-            <label>โหมดวางแผน
-              <select id="planMode">
-                <option value="pump">ตามแผนปรับปรุงปั๊ม</option>
-                <option value="normal">วันปกติ / ออกตลาดทั่วไป</option>
-                <option value="repair">ตารางซ่อม</option>
-              </select>
-            </label>
-            <label>เลือกสถานะ
-              <select id="marketStatusFilter">
-                <option value="">อัตโนมัติ</option>
-                <option value="lost">ลูกค้าหาย</option>
-                <option value="risky">ลูกค้าเสี่ยงหาย</option>
-                <option value="active">ลูกค้าปัจจุบัน</option>
-                <option value="winback">ลูกค้าใหม่</option>
-                <option value="dormant">ลูกค้าหายเกิน60วัน</option>
-              </select>
-            </label>
-          </div>
+          <h3 class="font-bold text-blue-800 text-lg flex items-center">
+            <svg class="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg>
+            สาขา ${bu}
+          </h3>
+          <div class="text-xs text-gray-500 mt-1">${branchName} • ปรับปรุง ${typeCounts['ปรับปรุงปั๊ม']} / ซ่อม ${typeCounts['ซ่อม']}</div>
         </div>
-        <label class="check-inline">
-          <input id="showAllToggle" type="checkbox" />
-          แสดงข้อมูลทั้งหมดในตารางด้านล่าง
+        <label class="flex items-center space-x-2 bg-blue-50 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-blue-100 transition-colors">
+          <span class="text-sm font-semibold text-blue-700">เลือกทั้งหมด</span>
+          <input type="checkbox" class="form-checkbox w-5 h-5 text-blue-600 rounded" onchange="toggleBranch('${bu}', this.checked)">
         </label>
       </div>
-
-      <div id="routeSummary" class="route-summary"></div>
-      <div id="routeDetail" class="route-detail">คลิกการ์ดแผนเส้นทางด้านบน เพื่อดูรายละเอียดและแผนที่</div>
-      <div id="routeMap" class="route-map"></div>
-    </section>
-
-    <section class="form-card">
-      <h2>บันทึกข้อมูลการออกตลาด</h2>
-      <form id="planForm">
-        <label>วันที่ออกตลาด<input name="visit_date" type="date" required /></label>
-        <label>ประเภทงาน
-          <select name="job_type">
-            <option value="ออกเยี่ยมลูกค้า">ออกเยี่ยมลูกค้า</option>
-            <option value="ลูกค้าใหม่/มุ่งหวัง">ลูกค้าใหม่/มุ่งหวัง</option>
-            <option value="ปรับปรุงปั๊ม">ปรับปรุงปั๊ม</option>
-            <option value="ซ่อม">ซ่อม</option>
-          </select>
-        </label>
-        <label>รหัสลูกค้า<input name="customer_id" placeholder="เช่น C001" /></label>
-        <label>ชื่อลูกค้า / ชื่อปั๊ม<input name="customer_name" placeholder="กรอกชื่อลูกค้า" required /></label>
-        <label>BU / สังกัด
-          <input name="bu" list="buList" placeholder="พิมพ์หรือเลือก เช่น ST, KN, MUK" />
-          <datalist id="buList">
-            <option value="ST"></option>
-            <option value="KN"></option>
-            <option value="MUK"></option>
-            <option value="WNN"></option>
-            <option value="KCG"></option>
-          </datalist>
-        </label>
-        <label>สายมิเตอร์
-          <input name="meter" list="meterList" placeholder="พิมพ์หรือเลือก เช่น MT-57 / TR-64" />
-          <datalist id="meterList">
-            <option value="MT-49"></option><option value="MT-55"></option><option value="MT-57"></option><option value="MT-58"></option>
-            <option value="MT-60"></option><option value="MT-61"></option><option value="MT-65"></option><option value="MT-67"></option>
-            <option value="MT-71"></option><option value="MT-72"></option><option value="TR-64"></option><option value="TR-68"></option><option value="TR-70"></option><option value="TR-73"></option>
-          </datalist>
-        </label>
-        <label>พื้นที่<input name="area" placeholder="ต./อ./จ." /></label>
-        <label>ผู้ประสานงาน
-        <select name="coordinator" id="coordinatorSelect">
-          <option value="">เลือกผู้ประสานงาน</option>
-          <option value="น้าฮ้อย">น้าฮ้อย</option>
-        </select>
-      </label>
-        <label>เบอร์โทร<input name="phone" placeholder="เบอร์โทร" /></label>
-        <label>ละติจูด<input name="lat" placeholder="ละ" /></label>
-        <label>ลองจิจูด<input name="lng" placeholder="ลอง" /></label>
-        <label>สถานะเข้าพบ
-          <select name="visit_status">
-            <option value="สำเร็จ">สำเร็จ</option>
-            <option value="ไม่พบลูกค้า">ไม่พบลูกค้า</option>
-            <option value="ปิดร้าน">ปิดร้าน</option>
-            <option value="เลิกกิจการ">เลิกกิจการ</option>
-          </select>
-        </label>
-        <button id="reloadBtn" class="reload-form-btn" type="button">รีเฟรชข้อมูล</button>
-      <button id="checkinBtn" class="checkin-btn" type="button">เช็คอิน GPS</button>
-        <label class="wide">หมายเหตุ<textarea name="note" placeholder="หมายเหตุเพิ่มเติม"></textarea></label>
-        <button class="submit-btn" type="submit">บันทึกลงชีต “เก็บข้อมูล”</button>
-      </form>
-      <p id="saveStatus" class="save-status"></p>
-    </section>
-  </main>
-
-  <main id="page2" class="app-page dashboard-page" hidden>
-    <section class="visit-dashboard dashboard-page-redesign" id="visitDashboardSection">
-      <div class="dashboard-head dashboard-head-wide">
-        <div>
-          <h2>Dashboard การออกตลาดย้อนหลัง</h2>
-          <p>สรุปข้อมูลจากชีต “เก็บข้อมูล” ตามช่วงวันที่และ BU/สังกัดที่เลือก</p>
-        </div>
-        <div class="dashboard-controls">
-          <label>ดูย้อนหลัง
-            <select id="dashboardDays">
-              <option value="all" selected>ข้อมูลทั้งหมด</option>
-              <option value="1">1 วันย้อนหลัง</option>
-              <option value="7">7 วันย้อนหลัง</option>
-              <option value="15">15 วันย้อนหลัง</option>
-              <option value="30">30 วันย้อนหลัง</option>
-            </select>
-          </label>
-          <label>BU / สังกัด
-            <select id="dashboardBU">
-              <option value="">ทุก BU</option>
-              <option value="ST">สามทองบริการ</option>
-              <option value="KN">เค.ซี.ปิโตรเลียม2006</option>
-              <option value="MUK">เค.ซี.จี.ปิโตรเลียม</option>
-              <option value="WNN">เค.ซี. กรีน เอ็นเนอร์จี</option>
-            </select>
-          </label>
-        </div>
-      </div>
-
-      <div class="dashboard-kpi-grid">
-        <div class="dashboard-card total"><span>ไปทั้งหมด</span><strong id="dashTotal">0</strong><small>จุด</small></div>
-        <div class="dashboard-card success"><span>อัตราเข้าพบสำเร็จ</span><strong id="dashSuccess">0%</strong><small id="dashSuccessText">0/0 จุด</small></div>
-        <div class="dashboard-card"><span>ออกเยี่ยมลูกค้า</span><strong id="dashJobVisit">0</strong><small>จุด</small></div>
-        <div class="dashboard-card"><span>ลูกค้าใหม่/มุ่งหวัง</span><strong id="dashJobLead">0</strong><small>จุด</small></div>
-        <div class="dashboard-card"><span>ปรับปรุงปั๊ม</span><strong id="dashJobPump">0</strong><small>จุด</small></div>
-        <div class="dashboard-card"><span>ซ่อม</span><strong id="dashJobRepair">0</strong><small>จุด</small></div>
-      </div>
-
-      <div class="dashboard-board-grid">
-        <div class="chart-card dashboard-board-card">
-          <div class="board-title-row">
-            <div>
-              <h3>Dashboard 1 : สรุปตามประเภทงาน</h3>
-              <p>อ้างอิงประเภทงานจากการเช็คอิน / บันทึกลงชีต “เก็บข้อมูล”</p>
-            </div>
-          </div>
-          <div class="dashboard-mini-cards job-mini-cards">
-            <div class="mini-card blue"><span>ออกเยี่ยมลูกค้า</span><strong id="dashJobVisitMini">0</strong><small>จุด</small></div>
-            <div class="mini-card green"><span>ลูกค้าใหม่/มุ่งหวัง</span><strong id="dashJobLeadMini">0</strong><small>จุด</small></div>
-            <div class="mini-card orange"><span>ปรับปรุงปั๊ม</span><strong id="dashJobPumpMini">0</strong><small>จุด</small></div>
-            <div class="mini-card red"><span>ซ่อม</span><strong id="dashJobRepairMini">0</strong><small>จุด</small></div>
-          </div>
-          <div class="dashboard-chart-grid two-charts">
-            <div class="chart-inner">
-              <h4>สัดส่วนประเภทงาน</h4>
-              <div class="donut-wrap compact">
-                <div id="dashJobDonut" class="dashboard-donut"><span id="dashJobDonutCenter">0<br>จุด</span></div>
-                <div id="dashJobLegend" class="dashboard-legend"></div>
+      <div class="space-y-3" id="list-${bu}">
+        ${jobs.map(j => `
+          <label class="flex items-start space-x-3 p-3 bg-gray-50 hover:bg-blue-50 rounded-lg border border-gray-100 cursor-pointer transition-colors">
+            <input type="checkbox" value="${j.id}" class="form-checkbox w-5 h-5 mt-0.5 text-blue-600 rounded job-cb" onchange="updateSelection()">
+            <div class="flex-1">
+              <div class="font-semibold text-gray-800 text-sm leading-tight mb-1">${j.name}</div>
+              <div class="flex items-center text-xs space-x-2">
+                <span class="px-2 py-0.5 rounded font-medium ${j.type === 'ซ่อม' ? 'bg-orange-100 text-orange-800' : 'bg-green-100 text-green-800'}">${j.type}</span>
+                <span class="text-gray-500 truncate max-w-[150px]">${j.status}</span>
               </div>
             </div>
-            <div class="chart-inner">
-              <h4>จำนวนตามประเภทงาน</h4>
-              <div id="dashJobBars" class="status-bars"></div>
-            </div>
+          </label>
+        `).join('')}
+      </div>
+    `;
+    container.appendChild(section);
+  }
+  
+  if(!hasAnyJob) {
+    container.innerHTML = `<div class="text-center py-10 text-gray-500 bg-gray-50 rounded-xl border border-dashed border-gray-300">ไม่มีงานค้างในระบบ</div>`;
+  }
+  
+  updateSelection();
+}
+
+function toggleBranch(bu, checked) {
+  const container = document.getElementById(`list-${bu}`);
+  if(!container) return;
+  const cbs = container.querySelectorAll('.job-cb');
+  cbs.forEach(cb => cb.checked = checked);
+  updateSelection();
+}
+
+function updateSelection() {
+  const cbs = document.querySelectorAll('.job-cb:checked');
+  const count = cbs.length;
+  document.getElementById('selected-count').innerText = count;
+  document.getElementById('btn-next').disabled = count === 0;
+  
+  selectedJobs = Array.from(cbs).map(cb => allJobs.find(j => j.id === cb.value));
+}
+
+// UI - Step 2: Days
+function goToStepSelect() {
+  document.getElementById('step-days').classList.add('hidden');
+  document.getElementById('step-select').classList.remove('hidden');
+}
+
+function goToStepDays() {
+  if(selectedJobs.length === 0) return;
+  
+  document.getElementById('step-select').classList.add('hidden');
+  document.getElementById('step-days').classList.remove('hidden');
+  
+  const branches = [...new Set(selectedJobs.map(j => j.branch))];
+  const container = document.getElementById('branch-days-container');
+  container.innerHTML = '';
+  
+  branches.forEach(bu => {
+    // Default: 1 day for ST, 2 days for others
+    const defaultDays = bu === 'ST' ? 1 : 2;
+    const count = selectedJobs.filter(j => j.branch === bu).length;
+    const branchName = START_POINTS[bu].name;
+    
+    // Auto adjust: if many jobs, suggest more days (assume 8 jobs per day max)
+    const suggestedDays = Math.max(defaultDays, Math.ceil(count / 8));
+    
+    container.innerHTML += `
+      <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex items-center justify-between">
+        <div>
+          <h3 class="font-bold text-gray-800 text-lg">สาขา ${bu}</h3>
+          <p class="text-xs text-gray-500">${branchName}</p>
+          <div class="mt-2 inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded font-semibold">
+            เลือกไว้ ${count} งาน
           </div>
         </div>
+        <div class="flex flex-col items-end">
+          <label class="text-xs font-semibold text-gray-600 mb-1">จำนวนวัน (กี่วัน?)</label>
+          <div class="flex items-center border-2 border-blue-200 rounded-lg bg-blue-50 overflow-hidden shadow-inner">
+            <button onclick="changeDays('${bu}', -1)" class="w-10 h-10 flex justify-center items-center bg-white hover:bg-gray-100 text-blue-600 font-bold text-xl active:bg-gray-200 transition-colors">-</button>
+            <input type="number" id="days-${bu}" value="${suggestedDays}" min="1" max="10" class="w-12 h-10 text-center font-bold text-lg bg-transparent outline-none border-x-2 border-blue-100" readonly>
+            <button onclick="changeDays('${bu}', 1)" class="w-10 h-10 flex justify-center items-center bg-white hover:bg-gray-100 text-blue-600 font-bold text-xl active:bg-gray-200 transition-colors">+</button>
+          </div>
+        </div>
+      </div>
+    `;
+  });
+}
 
-        <div class="chart-card dashboard-board-card">
-          <div class="board-title-row">
+function changeDays(bu, delta) {
+  const input = document.getElementById(`days-${bu}`);
+  let val = parseInt(input.value) + delta;
+  if (val < 1) val = 1;
+  if (val > 14) val = 14;
+  input.value = val;
+}
+
+// Logic - Generate Trip
+function generateTrip() {
+  const btn = document.querySelector('#step-days button[onclick="generateTrip()"]');
+  const origHtml = btn.innerHTML;
+  btn.innerHTML = `<div class="animate-spin h-5 w-5 border-b-2 border-white rounded-full mr-2"></div> กำลังประมวลผลเส้นทาง...`;
+  btn.disabled = true;
+  
+  // Use timeout to allow UI update
+  setTimeout(() => {
+    const branches = [...new Set(selectedJobs.map(j => j.branch))];
+    branchDaysConfig = {};
+    branches.forEach(bu => {
+      branchDaysConfig[bu] = parseInt(document.getElementById(`days-${bu}`).value) || 1;
+    });
+    
+    tripPlan = {};
+    
+    branches.forEach(bu => {
+      const jobs = selectedJobs.filter(j => j.branch === bu);
+      const days = branchDaysConfig[bu];
+      const start = START_POINTS[bu] || START_POINTS.ST;
+      
+      // Sort jobs by angle from start point to spatially chunk them (pie slice method)
+      jobs.forEach(j => {
+        j._angle = Math.atan2(j.lat - start.lat, j.lng - start.lng);
+        j._dist = haversine(start.lat, start.lng, j.lat, j.lng);
+      });
+      
+      jobs.sort((a, b) => a._angle - b._angle);
+      
+      // Split into 'days' chunks contiguously
+      const chunked = [];
+      const jobsPerDay = Math.ceil(jobs.length / days);
+      for(let i=0; i<days; i++) {
+        const slice = jobs.slice(i * jobsPerDay, (i+1) * jobsPerDay);
+        if(slice.length > 0) chunked.push(slice);
+      }
+      
+      // For each day, route using Nearest Neighbor
+      const dayRoutes = chunked.map(dayJobs => {
+        const route = [];
+        let current = start;
+        const unvisited = [...dayJobs];
+        
+        while(unvisited.length > 0) {
+          let nearestIdx = 0;
+          let minDist = Infinity;
+          unvisited.forEach((uj, idx) => {
+            const d = haversine(current.lat, current.lng, uj.lat, uj.lng);
+            if (d < minDist) { minDist = d; nearestIdx = idx; }
+          });
+          const next = unvisited.splice(nearestIdx, 1)[0];
+          route.push(next);
+          current = next;
+        }
+        return route;
+      });
+      
+      tripPlan[bu] = dayRoutes;
+    });
+    
+    btn.innerHTML = origHtml;
+    btn.disabled = false;
+    renderTripPlan();
+  }, 100);
+}
+
+// UI - Step 3: Trip Plan
+function renderTripPlan() {
+  document.getElementById('step-days').classList.add('hidden');
+  document.getElementById('step-trip').classList.remove('hidden');
+  window.scrollTo(0, 0);
+  
+  const branches = Object.keys(tripPlan);
+  const tabsContainer = document.getElementById('trip-branches-tabs');
+  
+  if (branches.length > 1) {
+    tabsContainer.style.display = 'flex';
+    tabsContainer.innerHTML = branches.map(bu => `
+      <button onclick="showTripBranch('${bu}')" id="tab-${bu}" class="px-5 py-2.5 whitespace-nowrap rounded-full text-sm font-bold shadow-sm transition-colors border">
+        สาขา ${bu}
+      </button>
+    `).join('');
+  } else {
+    tabsContainer.style.display = 'none';
+  }
+  
+  showTripBranch(branches[0]);
+}
+
+function showTripBranch(bu) {
+  const branches = Object.keys(tripPlan);
+  if (branches.length > 1) {
+    branches.forEach(b => {
+      const el = document.getElementById(`tab-${b}`);
+      if(b === bu) {
+        el.className = `px-5 py-2.5 whitespace-nowrap rounded-full text-sm font-bold shadow-sm transition-colors border bg-blue-600 text-white border-blue-700`;
+      } else {
+        el.className = `px-5 py-2.5 whitespace-nowrap rounded-full text-sm font-bold shadow-sm transition-colors border bg-white text-gray-600 border-gray-200 hover:bg-gray-50`;
+      }
+    });
+  }
+  
+  const days = tripPlan[bu];
+  const container = document.getElementById('trip-days-container');
+  container.innerHTML = '';
+  
+  days.forEach((route, dayIdx) => {
+    const dayNum = dayIdx + 1;
+    container.innerHTML += `
+      <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
+        <div class="bg-blue-50 px-4 py-3.5 border-b border-blue-100 flex justify-between items-center cursor-pointer active:bg-blue-100" onclick="openExecution('${bu}', ${dayIdx})">
+          <div class="flex items-center">
+            <div class="bg-blue-600 text-white rounded-lg w-10 h-10 flex items-center justify-center font-bold text-lg mr-3 shadow-sm">
+              ${dayNum}
+            </div>
             <div>
-              <h3>Dashboard 2 : สรุปสถานะลูกค้า</h3>
-              <p>อ้างอิงสถานะจากข้อมูลลูกค้าที่ตรงกับรหัสลูกค้า / ชื่อลูกค้าที่บันทึก</p>
+              <h3 class="font-bold text-blue-900 leading-tight">วันที่ ${dayNum}</h3>
+              <p class="text-xs text-blue-600 font-medium">${route.length} งานในเส้นทาง</p>
             </div>
           </div>
-          <div class="dashboard-mini-cards customer-mini-cards">
-            <div class="mini-card orange"><span>ลูกค้าหาย</span><strong id="dashLost">0</strong><small>จุด</small></div>
-            <div class="mini-card red"><span>ลูกค้าเสี่ยงหาย</span><strong id="dashRisky">0</strong><small>จุด</small></div>
-            <div class="mini-card green"><span>ลูกค้าปัจจุบัน</span><strong id="dashActive">0</strong><small>จุด</small></div>
-            <div class="mini-card blue"><span>ลูกค้าใหม่</span><strong id="dashNew">0</strong><small>จุด</small></div>
-            <div class="mini-card purple"><span>ลูกค้าหายเกิน60วัน</span><strong id="dashDormant">0</strong><small>จุด</small></div>
-          </div>
-          <div class="dashboard-chart-grid two-charts">
-            <div class="chart-inner">
-              <h4>สัดส่วนสถานะลูกค้า</h4>
-              <div class="donut-wrap compact">
-                <div id="dashDonut" class="dashboard-donut"><span id="dashDonutCenter">0<br>จุด</span></div>
-                <div id="dashLegend" class="dashboard-legend"></div>
+          <button class="text-blue-700 font-bold text-sm bg-white border border-blue-200 px-3 py-1.5 rounded-lg shadow-sm flex items-center">
+            เริ่มงาน <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+          </button>
+        </div>
+        <div class="p-4" onclick="openExecution('${bu}', ${dayIdx})">
+          <div class="relative pl-6 border-l-2 border-dashed border-gray-300 ml-2 space-y-4">
+            ${route.slice(0, 3).map((j, i) => `
+              <div class="relative">
+                <div class="absolute -left-[35px] bg-white border-2 border-gray-300 w-5 h-5 rounded-full flex justify-center items-center text-[10px] font-bold text-gray-500">${i+1}</div>
+                <div class="text-sm font-semibold text-gray-800 leading-tight">${j.name}</div>
+                <div class="text-[11px] text-gray-500 mt-0.5">${j.type}</div>
               </div>
-            </div>
-            <div class="chart-inner">
-              <h4>จำนวนตามสถานะลูกค้า</h4>
-              <div id="dashCustomerBars" class="status-bars"></div>
+            `).join('')}
+            ${route.length > 3 ? `
+              <div class="relative">
+                <div class="absolute -left-[35px] bg-white border-2 border-gray-200 w-5 h-5 rounded-full flex justify-center items-center text-[10px] font-bold text-gray-400">+</div>
+                <div class="text-xs text-gray-400 italic mt-1">... และอีก ${route.length - 3} งาน</div>
+              </div>
+            ` : ''}
+            
+            <div class="relative">
+              <div class="absolute -left-[35px] bg-blue-100 border-2 border-blue-400 w-5 h-5 rounded-full flex justify-center items-center text-[10px] font-bold text-blue-600"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg></div>
+              <div class="text-xs font-semibold text-blue-800 mt-1">กลับสาขา ${bu}</div>
             </div>
           </div>
         </div>
-
-        <div class="chart-card dashboard-board-card visit-status-card">
-          <h3>สรุปสถานะเข้าพบ</h3>
-          <p>ใช้ตรวจว่าเข้าพบสำเร็จ / ไม่พบลูกค้า / ปิดร้าน / เลิกกิจการ</p>
-          <div id="dashStatusBars" class="status-bars"></div>
-        </div>
       </div>
+    `;
+  });
+}
 
-      <div class="dashboard-summary-strip" id="dashboardSummaryStrip">
-        แผนที่วางไว้ 0 จุด • เข้าพบสำเร็จ 0 จุด • อัตราสำเร็จ 0%
+// UI - Step 4: Execution (Day Detail)
+function openExecution(bu, dayIdx) {
+  document.getElementById('step-trip').classList.add('hidden');
+  document.getElementById('trip-branches-tabs').style.display = 'none';
+  const execDiv = document.getElementById('step-execution');
+  execDiv.classList.remove('hidden');
+  window.scrollTo(0, 0);
+  
+  const route = tripPlan[bu][dayIdx];
+  const start = START_POINTS[bu] || START_POINTS.ST;
+  
+  let html = `
+    <div class="flex items-center mb-4 bg-white p-3 rounded-lg shadow-sm border border-gray-200 sticky top-[60px] z-40">
+      <button onclick="backToTrip()" class="text-gray-500 hover:text-blue-600 bg-gray-100 p-2 rounded-lg mr-3">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
+      </button>
+      <div>
+        <h2 class="text-base font-bold text-gray-800 leading-tight">สาขา ${bu} - วันที่ ${dayIdx + 1}</h2>
+        <p class="text-xs text-blue-600 font-medium">${route.length} งาน</p>
       </div>
-
-      <div class="dashboard-list-bottom">
-        <div class="dashboard-left-panel dashboard-list-full">
-          <h3>รายชื่อลูกค้าที่ออกตลาด</h3>
-          <p id="dashboardListNote">แสดงรายชื่อล่าสุดตามเงื่อนไขที่เลือก</p>
-          <div class="dashboard-table-wrap">
-            <table class="dashboard-table">
-              <thead>
-                <tr>
-                  <th>ลำดับ</th>
-                  <th>วันที่ออกตลาด</th>
-                  <th>ชื่อลูกค้า/ชื่อปั๊ม</th>
-                  <th>ประเภทงาน</th>
-                  <th>สถานะลูกค้า</th>
-                  <th>สถานะเข้าพบ</th>
-                </tr>
-              </thead>
-              <tbody id="dashboardBody"><tr><td colspan="6" class="loading">กำลังโหลด Dashboard...</td></tr></tbody>
-            </table>
+    </div>
+    
+    <!-- Map Container -->
+    <div class="bg-white p-2 rounded-xl shadow-sm border border-gray-200 mb-5 relative z-0">
+      <div id="map" class="map-container"></div>
+    </div>
+    
+    <div class="space-y-4">
+  `;
+  
+  // Form generation
+  route.forEach((j, i) => {
+    html += `
+      <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200 relative overflow-hidden" id="card-${j.id}">
+        <div class="absolute top-0 left-0 w-1.5 h-full ${j.type === 'ซ่อม' ? 'bg-orange-400' : 'bg-green-400'}"></div>
+        
+        <div class="flex justify-between items-start mb-3 pl-2">
+          <div class="flex-1 pr-2">
+            <h3 class="font-bold text-gray-800 leading-snug"><span class="bg-blue-100 text-blue-800 rounded px-1.5 py-0.5 text-xs mr-2 border border-blue-200 font-bold">${i+1}</span>${j.name}</h3>
+            <p class="text-[11px] text-gray-500 mt-1">รหัส: ${j.id}</p>
           </div>
+          <span class="text-[10px] px-2 py-1 ${j.type === 'ซ่อม' ? 'bg-orange-50 text-orange-700 border-orange-100' : 'bg-green-50 text-green-700 border-green-100'} border rounded font-semibold whitespace-nowrap">${j.type}</span>
         </div>
+        
+        <form data-id="${j.id}" data-bu="${bu}" data-day="${dayIdx + 1}" class="space-y-3 bg-gray-50 p-3 rounded-lg border border-gray-200 mt-3 ml-2">
+          <div class="flex items-center space-x-2 text-sm font-bold text-gray-700 mb-1 border-b pb-2">
+            <svg class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            <span>บันทึกการเข้าพบ (เช็คอิน)</span>
+          </div>
+          
+          <div>
+            <label class="text-[11px] font-bold text-gray-600 block mb-1">สถานะเข้าพบ <span class="text-red-500">*</span></label>
+            <select name="status" class="w-full border-gray-300 rounded-lg p-2.5 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" required>
+              <option value="">-- เลือกสถานะ --</option>
+              <option value="สำเร็จ (ปิดงาน)">สำเร็จ (ปิดงาน)</option>
+              <option value="รอดำเนินการต่อ">รอดำเนินการต่อ</option>
+              <option value="เข้าพบไม่ได้">เข้าพบไม่ได้</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-[11px] font-bold text-gray-600 block mb-1">หมายเหตุ / รายละเอียด</label>
+            <textarea name="note" class="w-full border-gray-300 rounded-lg p-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none" rows="2" placeholder="ระบุรายละเอียดการทำงาน..."></textarea>
+          </div>
+          <button type="button" onclick="getLocationAndSubmit(this)" class="w-full bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold py-2.5 rounded-lg shadow-sm flex justify-center items-center transition-colors">
+            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+            เช็คอิน GPS และบันทึก
+          </button>
+        </form>
       </div>
-    </section>
-  </main>
+    `;
+  });
+  
+  html += `</div>`;
+  execDiv.innerHTML = html;
+  
+  // Initialize Map safely
+  setTimeout(() => {
+    initMap([start, ...route, start]);
+  }, 200);
+}
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-  <script src="script.js?v=20260716-dashboard-all-default-v9"></script>
+function backToTrip() {
+  document.getElementById('step-execution').classList.add('hidden');
+  document.getElementById('step-trip').classList.remove('hidden');
+  
+  const branches = Object.keys(tripPlan);
+  if (branches.length > 1) {
+    document.getElementById('trip-branches-tabs').style.display = 'flex';
+  }
+}
+
+// Map Logic
+function initMap(points) {
+  if (leafletMap) {
+    leafletMap.remove();
+    leafletMap = null;
+  }
+  
+  leafletMap = L.map('map', { zoomControl: false }).setView([points[0].lat, points[0].lng], 10);
+  L.control.zoom({ position: 'bottomright' }).addTo(leafletMap);
+  
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OSM'
+  }).addTo(leafletMap);
+  
+  const bounds = L.latLngBounds();
+  
+  // Custom icons
+  const startIcon = L.divIcon({
+    html: `<div class="bg-blue-700 border-2 border-white w-5 h-5 rounded-full shadow-md"></div>`,
+    className: '', iconSize: [20, 20], iconAnchor: [10, 10]
+  });
+  
+  const stopIcon = (num) => L.divIcon({
+    html: `<div class="bg-white border-2 border-blue-600 text-blue-700 w-6 h-6 rounded-full flex justify-center items-center text-[10px] font-bold shadow-md">${num}</div>`,
+    className: '', iconSize: [24, 24], iconAnchor: [12, 12]
+  });
+  
+  points.forEach((p, i) => {
+    const isStart = i === 0 || i === points.length - 1;
+    const marker = L.marker([p.lat, p.lng], {
+      icon: isStart ? startIcon : stopIcon(i)
+    }).addTo(leafletMap);
+    
+    if (isStart) {
+      marker.bindPopup(`<b>เริ่มต้น/สิ้นสุด:</b> ${p.name || 'สาขา'}`);
+    } else {
+      marker.bindPopup(`<b>จุดที่ ${i}:</b> ${p.name}`);
+    }
+    bounds.extend([p.lat, p.lng]);
+  });
+  
+  leafletMap.fitBounds(bounds, { padding: [30, 30] });
+  
+  // Fetch OSRM Route
+  const coords = points.map(p => `${p.lng},${p.lat}`).join(';');
+  fetch(`https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`)
+    .then(r => r.json())
+    .then(data => {
+      if (data.routes && data.routes[0]) {
+        L.geoJSON(data.routes[0].geometry, {
+          style: { color: '#2563eb', weight: 4, opacity: 0.8, dashArray: '5, 5' }
+        }).addTo(leafletMap);
+      }
+    })
+    .catch(e => console.error("OSRM Error:", e));
+}
+
+// Check-in Logic
+function getLocationAndSubmit(btn) {
+  const form = btn.closest('form');
+  const statusEl = form.querySelector('[name="status"]');
+  if (!statusEl.value) {
+    alert("กรุณาเลือกสถานะเข้าพบ");
+    statusEl.focus();
+    return;
+  }
+  
+  const originalText = btn.innerHTML;
+  btn.innerHTML = `<div class="animate-spin h-4 w-4 border-b-2 border-white rounded-full mr-2 inline-block"></div>กำลังหาตำแหน่ง...`;
+  btn.disabled = true;
+  
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        submitForm(form, pos.coords.latitude, pos.coords.longitude, btn, originalText);
+      },
+      err => {
+        if(confirm("ไม่สามารถดึงตำแหน่ง GPS ได้ ต้องการบันทึกโดยไม่มีพิกัดหรือไม่?")) {
+          submitForm(form, '', '', btn, originalText);
+        } else {
+          btn.innerHTML = originalText;
+          btn.disabled = false;
+        }
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  } else {
+    submitForm(form, '', '', btn, originalText);
+  }
+}
+
+function submitForm(form, lat, lng, btn, originalText) {
+  btn.innerHTML = `<div class="animate-spin h-4 w-4 border-b-2 border-white rounded-full mr-2 inline-block"></div>กำลังบันทึก...`;
+  
+  const status = form.querySelector('[name="status"]').value;
+  const note = form.querySelector('[name="note"]').value;
+  const jId = form.dataset.id;
+  const bu = form.dataset.bu;
+  const dayNum = form.dataset.day;
+  
+  const d = new Date();
+  const dateStr = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth()+1).toString().padStart(2, '0')}/${d.getFullYear()}`;
+  const tripIdStr = `KCE-${d.getFullYear()}${(d.getMonth()+1).toString().padStart(2,'0')}${d.getDate().toString().padStart(2,'0')}`;
+  
+  const payload = {
+    "วันที่บันทึกระบบ": d.toISOString(),
+    "วันที่ออกตลาด": dateStr,
+    "ประเภทงาน": "แผนงาน KCE",
+    "รหัสลูกค้า": jId,
+    "BU/สังกัด": bu,
+    "ละติจูด": lat,
+    "ลองจิจูด": lng,
+    "สถานะเข้าพบ": status,
+    "หมายเหตุ": note,
+    "trip_id": tripIdStr,
+    "day_number": dayNum
+  };
+  
+  // Post data to App Script
+  fetch(WEB_APP_URL, {
+    method: 'POST',
+    mode: 'no-cors',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }).then(() => {
+    btn.innerHTML = `<svg class="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> บันทึกสำเร็จ`;
+    btn.classList.remove('bg-blue-600', 'hover:bg-blue-700', 'active:bg-blue-800');
+    btn.classList.add('bg-green-600', 'hover:bg-green-700');
+    
+    // UI Feedback for completion
+    const card = document.getElementById(`card-${jId}`);
+    if (card) {
+      card.classList.add('opacity-75', 'bg-gray-100');
+      const badge = document.createElement('div');
+      badge.className = 'absolute top-3 right-3 bg-green-100 text-green-800 text-[10px] font-bold px-2 py-1 rounded shadow-sm border border-green-200 flex items-center z-10';
+      badge.innerHTML = `<svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> ดำเนินการแล้ว`;
+      card.appendChild(badge);
+    }
+    
+    setTimeout(() => {
+      btn.innerHTML = originalText;
+      btn.classList.remove('bg-green-600', 'hover:bg-green-700');
+      btn.classList.add('bg-blue-600', 'hover:bg-blue-700', 'active:bg-blue-800');
+      btn.disabled = false;
+    }, 4000);
+  }).catch(e => {
+    alert("บันทึกผิดพลาด: " + e.message);
+    btn.innerHTML = originalText;
+    btn.disabled = false;
+  });
+}
+
+// Initial load
+window.onload = () => loadData();
+</script>
+
 </body>
 </html>
