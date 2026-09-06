@@ -598,3 +598,118 @@ tr:nth-child(even) td { background:#f9fafb; }
 }
 .reload-form-btn:hover { filter:brightness(1.05); }
 @media (max-width:900px){ .reload-form-btn{width:100%;} }
+
+/* ===== KCE Job Planner (แผนงาน KCE) module 20260906 =====
+   Mobile-first: written for ~360-430px phone widths first, then
+   widened for tablet/desktop. Kept in the same design system as
+   the rest of the app (card look, blue/orange/green palette). */
+.kce-page { padding-bottom:110px; }
+.kce-card {
+  margin:0 18px 18px; background:#fff; border-radius:16px; padding:18px;
+  box-shadow:0 4px 16px rgba(15,23,42,.08);
+}
+.kce-card h2 { margin:0 0 6px; color:#0f172a; }
+.kce-sub, .kce-hint { margin:0 0 16px; color:#64748b; font-size:13.5px; line-height:1.5; }
+.kce-hint { background:#eff6ff; border:1px solid #bfdbfe; border-radius:12px; padding:12px 14px; color:#1d4ed8; font-weight:600; }
+.kce-step-head { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+.kce-step-head h2 { margin:0; }
+.kce-step-head-between { justify-content:space-between; }
+.kce-icon-btn {
+  background:#eef2f7; color:#0b3b70; border-radius:999px; padding:0; width:40px; height:40px;
+  min-width:40px; display:flex; align-items:center; justify-content:center; font-size:18px; font-weight:900;
+}
+.kce-icon-btn:hover { background:#e2e8f0; }
+
+/* --- Job checklist (step 1) --- */
+.kce-job-list { display:flex; flex-direction:column; gap:14px; }
+.kce-branch-group { border:1px solid #e2e8f0; border-radius:14px; padding:14px; background:#fbfcfe; }
+.kce-branch-group-head { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; padding-bottom:10px; margin-bottom:10px; border-bottom:1px solid #e5e7eb; }
+.kce-branch-title { font-weight:800; color:#0b3b70; font-size:16px; }
+.kce-branch-sub { color:#94a3b8; font-size:12px; margin-top:4px; }
+.kce-select-all-chip {
+  display:flex; align-items:center; gap:8px; background:#eff6ff; border:1px solid #bfdbfe; color:#1d4ed8;
+  border-radius:10px; padding:9px 12px; font-size:13px; font-weight:700; white-space:nowrap; cursor:pointer;
+}
+.kce-select-all-chip input { width:auto; margin:0; }
+.kce-job-checklist { display:flex; flex-direction:column; gap:8px; }
+.kce-job-item {
+  display:flex; align-items:flex-start; gap:10px; padding:12px; background:#fff; border:1px solid #e5e7eb;
+  border-radius:12px; cursor:pointer;
+}
+.kce-job-item:active { background:#f8fafc; }
+.kce-job-item input { width:auto; margin:2px 0 0; min-width:20px; min-height:20px; }
+.kce-job-item-name { font-weight:700; color:#1f2937; font-size:14px; line-height:1.4; }
+.kce-job-item-meta { display:flex; flex-wrap:wrap; gap:6px; margin-top:5px; align-items:center; }
+.kce-job-tag { display:inline-block; padding:3px 9px; border-radius:999px; font-weight:700; font-size:11.5px; }
+.kce-job-tag.pump { background:#dcfce7; color:#166534; }
+.kce-job-tag.repair { background:#ffedd5; color:#9a3412; }
+.kce-job-item-info { color:#94a3b8; font-size:12px; }
+.kce-job-item-status { color:#b45309; font-size:11.5px; margin-top:4px; }
+.kce-empty-state { text-align:center; padding:32px 14px; color:#94a3b8; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:14px; }
+
+/* --- Sticky bottom action bar --- */
+.kce-sticky-bar { position:fixed; left:0; right:0; bottom:0; z-index:60; background:#fff; border-top:1px solid #e5e7eb; padding:12px 18px; box-shadow:0 -6px 18px rgba(15,23,42,.08); }
+.kce-primary-btn {
+  width:100%; min-height:52px; background:#0b3b70; color:#fff; border-radius:14px; font-size:15px; font-weight:800;
+}
+.kce-primary-btn:disabled { background:#cbd5e1; color:#64748b; cursor:not-allowed; }
+.kce-primary-btn-green { background:#16a34a; }
+.kce-outline-btn {
+  background:#fff; border:1px solid #cbd5e1; color:#334155; padding:9px 14px; font-size:13px; font-weight:700; border-radius:10px;
+}
+.kce-outline-btn-danger { border-color:#fecaca; background:#fef2f2; color:#dc2626; }
+
+/* --- Step 2: branch / day-count wizard --- */
+.kce-branch-card { border:1px solid #e2e8f0; border-radius:14px; padding:16px; background:#fbfcfe; }
+.kce-branch-card-head { display:flex; align-items:center; gap:12px; margin-bottom:14px; }
+.kce-branch-avatar { width:44px; height:44px; border-radius:12px; background:#0b3b70; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:900; flex-shrink:0; }
+.kce-branch-progress { color:#94a3b8; font-size:12px; margin-bottom:10px; }
+.kce-branch-count-chip { display:inline-block; background:#dbeafe; color:#1e40af; font-size:12px; font-weight:700; padding:6px 12px; border-radius:10px; margin-bottom:14px; }
+.kce-day-row { display:flex; align-items:center; justify-content:space-between; gap:12px; background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:14px; }
+.kce-day-row-label { font-weight:700; color:#334155; font-size:14px; }
+.kce-day-row-sub { color:#94a3b8; font-size:12px; margin-top:2px; }
+.kce-day-stepper { display:flex; align-items:center; border:2px solid #bfdbfe; border-radius:12px; overflow:hidden; background:#fff; flex-shrink:0; }
+.kce-day-stepper button { width:44px; height:44px; background:#fff; color:#1d4ed8; font-size:22px; font-weight:900; border-radius:0; }
+.kce-day-stepper button:active { background:#eff6ff; }
+.kce-day-stepper input { width:54px; height:44px; text-align:center; font-weight:800; font-size:17px; border:0; border-left:2px solid #eff6ff; border-right:2px solid #eff6ff; border-radius:0; margin:0; padding:0; }
+.kce-day-note { color:#94a3b8; font-size:11.5px; margin-top:10px; }
+
+/* --- Step 3: trip / day cards --- */
+.kce-warning { display:flex; gap:10px; align-items:flex-start; background:#fffbeb; border:1px solid #fde68a; color:#92400e; border-radius:12px; padding:12px 14px; font-size:13px; margin-bottom:14px; font-weight:600; }
+.kce-branch-tabs { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
+.kce-branch-tab { background:#eef2f7; color:#334155; border-radius:999px; padding:9px 16px; font-size:13px; font-weight:700; }
+.kce-branch-tab.active { background:#0b3b70; color:#fff; }
+.kce-day-cards { display:flex; flex-direction:column; gap:12px; }
+.kce-day-card { border:1px solid #e2e8f0; border-radius:14px; padding:14px; background:#fbfcfe; }
+.kce-day-card.all-done { background:#f0fdf4; border-color:#bbf7d0; }
+.kce-day-card-head { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+.kce-day-card-title { font-weight:800; color:#0b3b70; font-size:15px; }
+.kce-day-card-count { color:#64748b; font-size:12px; margin-top:3px; }
+.kce-day-card-progress { margin:10px 0; }
+.kce-progress-track { height:8px; border-radius:999px; background:#e2e8f0; overflow:hidden; }
+.kce-progress-fill { height:100%; background:#16a34a; border-radius:999px; }
+.kce-progress-text { font-size:12px; color:#166534; font-weight:700; margin-top:6px; }
+.kce-day-card-open-btn { width:100%; min-height:46px; background:#0b3b70; color:#fff; border-radius:12px; font-weight:800; font-size:14px; }
+.kce-day-card-open-btn.done { background:#16a34a; }
+
+/* --- Trip-mode banner shown on the planning page when a KCE day is open --- */
+.kce-trip-banner { margin:0 18px 14px; background:#0b3b70; color:#fff; border-radius:12px; padding:12px 16px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.kce-back-btn { background:#fff; color:#0b3b70; font-size:13px; padding:8px 14px; border-radius:9px; font-weight:800; }
+#kceTripBannerText { font-weight:700; font-size:13.5px; }
+
+@media (max-width:900px){
+  .kce-page { padding-bottom:130px; }
+  .kce-card { margin:0 10px 12px; padding:12px; border-radius:12px; }
+  .kce-trip-banner { margin:0 10px 12px; }
+  .kce-branch-group-head { flex-direction:column; align-items:stretch; }
+  .kce-select-all-chip { justify-content:center; }
+  .kce-branch-card-head { align-items:flex-start; }
+  .kce-day-row { flex-direction:column; align-items:stretch; text-align:left; }
+  .kce-day-stepper { align-self:flex-start; }
+  .kce-sticky-bar { padding:10px 12px; }
+}
+
+@media (min-width:900px){
+  .kce-job-list { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .kce-day-cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:12px; }
+}
