@@ -615,8 +615,8 @@ tr:nth-child(even) td { background:#f9fafb; }
 .kce-step-head h2 { margin:0; }
 .kce-step-head-between { justify-content:space-between; }
 .kce-icon-btn {
-  background:#eef2f7; color:#0b3b70; border-radius:999px; padding:0; width:40px; height:40px;
-  min-width:40px; display:flex; align-items:center; justify-content:center; font-size:18px; font-weight:900;
+  background:#eef2f7; color:#0b3b70; border-radius:999px; padding:0; width:44px; height:44px;
+  min-width:44px; display:flex; align-items:center; justify-content:center; font-size:18px; font-weight:900;
 }
 .kce-icon-btn:hover { background:#e2e8f0; }
 
@@ -644,6 +644,15 @@ tr:nth-child(even) td { background:#f9fafb; }
 .kce-job-tag.pump { background:#dcfce7; color:#166534; }
 .kce-job-tag.repair { background:#ffedd5; color:#9a3412; }
 .kce-job-item-info { color:#94a3b8; font-size:12px; }
+.kce-job-item-date { margin-top:5px; font-size:11.5px; font-weight:700; color:#64748b; }
+.kce-job-item-date.due-today { color:#b45309; }
+.kce-job-item-date.overdue { color:#c2410c; }
+.kce-job-item-date.overdue-severe { color:#dc2626; }
+.kce-job-item-date.unknown { color:#94a3b8; font-weight:600; }
+.kce-job-item.overdue { border-left:4px solid #f97316; }
+.kce-job-item.overdue-severe { border-left:4px solid #dc2626; background:#fef2f2; }
+.kce-job-item.due-today { border-left:4px solid #f59e0b; }
+.kce-overdue-count { color:#dc2626; font-weight:800; }
 .kce-job-item-status { color:#b45309; font-size:11.5px; margin-top:4px; }
 .kce-empty-state { text-align:center; padding:32px 14px; color:#94a3b8; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:14px; }
 
@@ -712,4 +721,48 @@ tr:nth-child(even) td { background:#f9fafb; }
 @media (min-width:900px){
   .kce-job-list { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
   .kce-day-cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:12px; }
+}
+
+/* ===== Mobile-usability pass 20260906-2 =====
+   1) Sticky nav + trip banner so navigation stays reachable while scrolling a long
+      stop list / map on a phone, instead of needing to scroll back to the top.
+   2) Route-detail table reflows into stacked cards on phones instead of forcing
+      horizontal scroll (it was min-width:800px, wider than any phone viewport) —
+      this table is shared by the normal planning flow AND the KCE day-execution
+      view, so this fixes both.
+   3) Bigger touch targets (44px+) for inputs/selects/buttons on phones. */
+@media (max-width:900px){
+  .page-tabs {
+    position:sticky; top:0; z-index:55; background:#f3f6fb;
+    padding:10px 12px 8px; margin:0; box-shadow:0 2px 10px rgba(15,23,42,.08);
+  }
+  .kce-trip-banner { position:sticky; top:60px; z-index:50; }
+
+  /* --- route-detail table: card layout instead of a wide scrolling table --- */
+  .detail-table { min-width:0; width:100%; display:block; }
+  .detail-table thead { display:none; }
+  .detail-table tbody { display:block; }
+  .detail-table tr {
+    display:block; background:#fff; border:1px solid #e5e7eb; border-radius:12px;
+    padding:2px 12px; margin-bottom:10px;
+  }
+  .detail-table tr td { background:#fff; }
+  .detail-table tr.done-row, .detail-table tr.done-row td { background:#ecfdf5 !important; }
+  .detail-table td {
+    display:flex; justify-content:space-between; gap:14px; align-items:flex-start;
+    padding:9px 0; border-bottom:1px dashed #eef2f7; text-align:right; font-size:13px;
+  }
+  .detail-table td:last-child { border-bottom:0; }
+  .detail-table td::before {
+    content:attr(data-label); font-weight:700; color:#64748b; text-align:left;
+    flex-shrink:0; font-size:11.5px; padding-top:1px;
+  }
+
+  /* --- touch targets: keep checkboxes their normal size, grow everything else --- */
+  input:not([type="checkbox"]):not([type="radio"]), select, textarea { min-height:44px; }
+  textarea { min-height:84px; }
+  button, .map-link { min-height:44px; }
+  .checkin-btn, .reload-form-btn, .submit-btn { min-height:48px; font-size:15px; }
+  .kce-select-all-chip { min-height:44px; }
+  .kce-primary-btn, .kce-day-card-open-btn { min-height:52px; }
 }
