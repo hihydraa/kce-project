@@ -2870,7 +2870,7 @@ function renderRouteDetail(list) {
   const rows = displayList.map((r, i) => {
     const done = isCompleted(r);
     const areaCell = detailAreaHtml(r, i);
-    return `<tr class="${done ? "done-row" : ""}"><td>${done ? "✓" : i + 1}</td><td>${escapeHtml(r.customer_name || "-")}</td><td>${escapeHtml(r.type || "-")}</td><td>${escapeHtml(r.status || "-")}<br><span class="visit-state ${done ? "done" : "pending"}">${completedLabel(r)}</span></td><td>${areaCell}</td></tr>`;
+    return `<tr class="${done ? "done-row" : ""}"><td data-label="ลำดับ">${done ? "✓" : i + 1}</td><td data-label="ชื่อปั๊ม/ลูกค้า">${escapeHtml(r.customer_name || "-")}</td><td data-label="ประเภท">${escapeHtml(r.type || "-")}</td><td data-label="สถานะ">${escapeHtml(r.status || "-")}<br><span class="visit-state ${done ? "done" : "pending"}">${completedLabel(r)}</span></td><td data-label="พื้นที่">${areaCell}</td></tr>`;
   }).join("");
   detail.innerHTML = `
     <div class="detail-head">
@@ -3784,6 +3784,17 @@ function kceSelectedJobRows() {
 }
 
 /* ===== ขั้นที่ 1: เลือกงาน ===== */
+/* วันที่นัดหมาย/กำหนดของงาน + สถานะ delay ให้พนักงาน KCE เห็นว่างานไหนค้างมานานแล้ว */
+function kceJobDateInfo(job) {
+  if (!job.dateObj) return { label: "ไม่ระบุวันที่นัดหมาย", cls: "unknown", overdueDays: null };
+  const diffDays = Math.round((thaiNow() - job.dateObj) / 86400000);
+  const dateLabel = thaiDateLabel(job.dateObj);
+  if (diffDays > 30) return { label: `นัดหมาย ${dateLabel} • เลยกำหนดมานาน ${diffDays} วัน`, cls: "overdue-severe", overdueDays: diffDays };
+  if (diffDays > 0) return { label: `นัดหมาย ${dateLabel} • เลยกำหนด ${diffDays} วัน`, cls: "overdue", overdueDays: diffDays };
+  if (diffDays === 0) return { label: `นัดหมาย ${dateLabel} • ถึงกำหนดวันนี้`, cls: "due-today", overdueDays: 0 };
+  return { label: `นัดหมาย ${dateLabel}`, cls: "upcoming", overdueDays: null };
+}
+
 function kceRenderJobSelection() {
   const container = document.getElementById("kceJobListContainer");
   if (!container) return;
@@ -3796,6 +3807,12 @@ function kceRenderJobSelection() {
     if (!byBranch.has(bu)) byBranch.set(bu, []);
     byBranch.get(bu).push(j);
   });
+  // เรียงงานเก่าสุด/เลยกำหนดนานสุดไว้บนสุดของแต่ละสาขา เพื่อให้เห็นงาน delay ก่อน
+  byBranch.forEach(list => list.sort((a, b) => {
+    const av = a.dateObj ? a.dateObj.getTime() : Infinity;
+    const bv = b.dateObj ? b.dateObj.getTime() : Infinity;
+    return av - bv;
+  }));
 
   const order = ["ST", "KN", "MUK", "WNN"];
   const buKeys = order.filter(b => byBranch.has(b) && byBranch.get(b).length)
@@ -3809,12 +3826,13 @@ function kceRenderJobSelection() {
     const branchName = branchNameFromBU(bu);
     const pumpCount = list.filter(j => j.type === "ปรับปรุงปั๊ม").length;
     const repairCount = list.filter(j => j.type === "ซ่อม").length;
+    const overdueCount = list.filter(j => { const d = kceJobDateInfo(j); return d.cls === "overdue" || d.cls === "overdue-severe"; }).length;
     return `
       <div class="kce-branch-group" data-bu="${escapeHtml(bu)}">
         <div class="kce-branch-group-head">
           <div>
             <div class="kce-branch-title">สาขา ${escapeHtml(bu)}</div>
-            <div class="kce-branch-sub">${escapeHtml(branchName)} • ปรับปรุงปั๊ม ${pumpCount} • ซ่อม ${repairCount}</div>
+            <div class="kce-branch-sub">${escapeHtml(branchName)} • ปรับปรุงปั๊ม ${pumpCount} • ซ่อม ${repairCount}${overdueCount ? ` • <span class="kce-overdue-count">เลยกำหนด ${overdueCount} งาน</span>` : ""}</div>
           </div>
           <label class="kce-select-all-chip">
             <input type="checkbox" class="kce-select-all-cb" data-bu="${escapeHtml(bu)}" />
@@ -3822,8 +3840,10 @@ function kceRenderJobSelection() {
           </label>
         </div>
         <div class="kce-job-checklist">
-          ${list.map(j => `
-            <label class="kce-job-item">
+          ${list.map(j => {
+            const dateInfo = kceJobDateInfo(j);
+            return `
+            <label class="kce-job-item ${dateInfo.cls}">
               <input type="checkbox" class="kce-job-cb" data-key="${escapeHtml(kceJobKey(j))}" data-bu="${escapeHtml(bu)}" />
               <div>
                 <div class="kce-job-item-name">${escapeHtml(j.customer_name || j.customer_id || "ไม่ระบุชื่อ")}</div>
@@ -3831,9 +3851,11 @@ function kceRenderJobSelection() {
                   <span class="kce-job-tag ${j.type === "ซ่อม" ? "repair" : "pump"}">${escapeHtml(j.type)}</span>
                   ${j.customer_id ? `<span class="kce-job-item-info">${escapeHtml(j.customer_id)}</span>` : (j.meter ? `<span class="kce-job-item-info">${escapeHtml(j.meter)}</span>` : "")}
                 </div>
+                <div class="kce-job-item-date ${dateInfo.cls}">${escapeHtml(dateInfo.label)}</div>
                 <div class="kce-job-item-status">${escapeHtml(j.status || "รอดำเนินการ")}</div>
               </div>
-            </label>`).join("")}
+            </label>`;
+          }).join("")}
         </div>
       </div>`;
   }).join("");
